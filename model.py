@@ -20,7 +20,7 @@ class MyModel(nn.Module):
         self.ner_embedding = nn.Embedding(config['ner_set_size'], config['ner_embedding_dim'])
         self.use_pos = config['use_pos']
         self.use_ner = config['use_ner']
-        self.lstm_input_dim = config['word_embedding_dim'] * 2
+        self.lstm_input_dim = config['word_embedding_dim'] *2
         if self.use_pos:
             self.lstm_input_dim += config['pos_embedding_dim']
         if self.use_ner:
@@ -28,14 +28,14 @@ class MyModel(nn.Module):
         self.word_lex_repr_weight = nn.Linear(self.lstm_input_dim,self.lstm_input_dim)
         self.question_repr = nn.LSTM(
             self.lstm_input_dim, config['hidden_size'], config['num_layers'],
-            bidirectional=False, batch_first=True, dropout=config['drop_out'])
+            bidirectional=True, batch_first=True)
 
         self.document_repr = nn.LSTM(
             self.lstm_input_dim, config['hidden_size'], config['num_layers'],
-            bidirectional=False, batch_first=True, dropout=config['drop_out'])
+            bidirectional=True, batch_first=True)
         self.dropout = nn.Dropout(config['drop_out'])
-        self.output = nn.Linear(config['hidden_size']*2, config['categories'])
-
+        self.output = nn.Linear(config['hidden_size']*8, config['categories'])
+        self.pool = nn.MaxPool2d((config['max_len'],1))
 
     def forward(self, word_seq_question, pos_seq_question, ner_seq_question,
                 word_seq_document, pos_seq_document, ner_seq_document):
@@ -43,7 +43,7 @@ class MyModel(nn.Module):
         # Global Context Representation
         word_question_repr = self.word_repr(word_seq_question, pos_seq_question, ner_seq_question)
         word_document_repr = self.word_repr(word_seq_document, pos_seq_document, ner_seq_document)
-
+        #print(word_question_repr.size())
         batch_size = word_seq_question.size(0)
 
 
@@ -52,19 +52,26 @@ class MyModel(nn.Module):
 
         question_output, question_hidden = self.question_repr(word_question_repr, question_hidden)
         document_output, document_hidden = self.question_repr(word_document_repr, document_hidden)
+        question_output = question_output.contiguous()
+        document_output = document_output.contiguous()
 
-        question_output = self.dropout(question_output.transpose(0, 1)[-1])
-        document_output = self.dropout(document_output.transpose(0, 1)[-1])
+        question_output = self.pool(question_output.view(batch_size, 1, -1, self.config['hidden_size']*2)).view(
+            batch_size, self.config['hidden_size']*2)
+        document_output = self.pool(document_output.view(batch_size, 1, -1, self.config['hidden_size']*2)).view(
+            batch_size, self.config['hidden_size']*2)
 
         mix_repr = torch.cat((question_output,document_output),dim=1)
+        mix_repr = torch.cat((mix_repr,question_output * document_output),dim=1)
 
-        output = self.output(mix_repr)
+        mix_repr = torch.cat((mix_repr,question_output - document_output),dim=1)
+        output = self.output(self.dropout(mix_repr))
         return output
 
     def init_hidden(self, batch_size, num_layers, hidden_size):
         weight = next(self.parameters()).data
-        return (Variable(weight.new(num_layers, batch_size, hidden_size).zero_()),
-                Variable(weight.new(num_layers, batch_size, hidden_size).zero_()))
+
+        return (Variable(weight.new(num_layers*2, batch_size, hidden_size).zero_()),
+                Variable(weight.new(num_layers*2, batch_size, hidden_size).zero_()))
 
     def init_weights(self, init_range=0.1, pre_trained_filename=None):
         if pre_trained_filename:
@@ -100,7 +107,7 @@ class MyModel(nn.Module):
         pretrained = self.pretrained_word_embedding(token_seq)
         untrained = self.untrained_word_embedding(token_seq)
         word_lex_repr = torch.cat((pretrained, untrained), dim=-1)
-
+        #word_lex_repr = pretrained
         if self.use_pos:
             pos_repr = self.pos_embedding(pos_seq)
             word_lex_repr = torch.cat((word_lex_repr, pos_repr), dim=-1)
@@ -129,7 +136,8 @@ if __name__ == '__main__':
         'drop_out': 0.3,
         'categories': 2,
         'use_pos': True,
-        'use_ner': True
+        'use_ner': True,
+        'max_len': 100
     }
     model = MyModel(config)
     model.init_weights()
