@@ -1,3 +1,4 @@
+import IPython
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.feature_extraction.text import TfidfTransformer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -26,7 +27,10 @@ def deal_data(file_name, test_flag):
             question = deal_sentence(question)
             answer = line.split('\t')[1]
             answer = deal_sentence(answer)
-            if question != pre_question:
+            q_s = set(question.split())
+            p_q_s = set(pre_question.split())
+            # IPython.embed()
+            if len(q_s.intersection(p_q_s)) / len(q_s.union(p_q_s)) < 0.8:
                 if flag:
                     document.append(temp_array)
                     if test_flag:
@@ -45,7 +49,7 @@ def deal_data(file_name, test_flag):
 
 if __name__ == '__main__':
     deal_data('data/x_training.txt', 0)
-    deal_data('data/x_testing.txt', 1)
+    deal_data('data/x_final_test.txt', 1)
     vectorizer = CountVectorizer(stop_words='english', max_df=0.5)
     temp_document = []
     for d in document:
